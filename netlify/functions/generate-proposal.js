@@ -1,12 +1,14 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+// OpenAIのライブラリをインポートします
+const OpenAI = require('openai');
 
-// Netlifyに設定するAPIキーを安全に読み込みます
-const API_KEY = process.env.GEMINI_API_KEY;
-const genAI = new GoogleGenerativeAI(API_KEY);
+// Netlifyに設定するOpenAIのAPIキーを安全に読み込みます
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Netlifyがこの関数を呼び出します
 exports.handler = async function(event) {
-    // POST以外のリクエストは無視します
+    // POSTリクエスト以外は無視します
     if (event.httpMethod !== 'POST') {
         return { statusCode: 405, body: 'Method Not Allowed' };
     }
@@ -15,7 +17,7 @@ exports.handler = async function(event) {
         // フロントエンドから送られてきた肌スコアを受け取ります
         const { scores } = JSON.parse(event.body);
         
-        // CSVから読み込んだ治療法データベースです
+        [cite_start]// CSVから読み込んだ治療法データベースです [cite: 176]
         const treatmentsDB = `カテゴリ,治療法名,特徴,価格（円）
 しわ,ボトックス,表情ジワの改善に即効性あり,20000
 しわ,ヒアルロン酸注入,ボリュームアップに効果的,50000
@@ -53,9 +55,8 @@ exports.handler = async function(event) {
 脂肪除去,HIFU（脂肪層）,脂肪層にピンポイント照射,100000
 脂肪除去,カベリン注射,植物由来成分の脂肪融解,25000`;
         
-        // AIへの指示書（プロンプト）
-        const prompt = `あなたは経験豊富な美容カウンセラーです。以下のクライアントの肌診断スコアと、私たちのクリニックが提供する治療法リストを参考に、パーソナライズされた美容プランをHTML形式で提案してください。
-
+        // ChatGPTへの指示書（プロンプト）です
+        const userPrompt = `
 # クライアントの肌診断スコア (100点満点)
 - くすみ: ${scores.dullness}
 - なめらかさ(しわ): ${scores.smoothness}
@@ -63,30 +64,45 @@ exports.handler = async function(event) {
 - シミ: ${scores.spots}
 - 毛穴: ${scores.pores}
 
-# 治療法リスト
+# 提案可能な治療法リスト
 ${treatmentsDB}
 
-# 指示
-1. スコアが特に低い項目（目安：60点未満）を2つまで特定し、その悩みを冒頭で指摘してください。
-2. 指摘した各悩みに対して、最も関連性の高い治療法をリストから2つずつ提案してください。
-3. 提案する際は、「治療法名」「特徴」「参考価格」を分かりやすくまとめてください。価格は「円」を付けてください。
-4. 全体を通して、専門的でありながらも、利用者に寄り添うような温かいトーンで記述してください。
-5. 必ずHTML形式で出力してください。診断結果のタイトルは<h3>タグ、各治療法の提案は<div>で囲み、治療法名は<h5>タグ、特徴と価格は<p>タグを使用してください。`;
+# あなたへの指示
+1. あなたは経験豊富な美容カウンセラーです。
+2. 上記のクライアントの肌診断スコアを分析し、スコアが特に低い項目（目安：60点未満）を2つまで特定してください。
+3. 特定した悩みに対して、治療法リストの中から最も関連性の高い治療法を2つずつ提案してください。
+4. 提案する際は、「治療法名」「特徴」「参考価格」を分かりやすくまとめてください。価格には「円」を付けてください。
+5. 全体を通して、専門的でありながらも、利用者に寄り添うような温かいトーンで記述してください。
+6. 回答は必ずHTML形式で出力してください。診断結果のタイトルは<h3>タグ、各治療法の提案は<div>で囲み、治療法名は<h5>タグ、特徴と価格は<p>タグを使用してください。`;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const result = await model.generateContent(prompt);
-        const aiReportHtml = (await result.response).text();
+        // ChatGPTにリクエストを送信します
+        const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                {
+                    role: "system",
+                    content: "あなたは優秀な美容カウンセラーです。"
+                },
+                {
+                    role: "user",
+                    content: userPrompt
+                }
+            ],
+        });
 
-        // 成功したら、AIが作ったHTMLをフロントエンドに返します
+        const aiReportHtml = completion.choices[0].message.content;
+
+        // フロントエンドにHTML形式のレポートを返します
         return {
             statusCode: 200,
             body: JSON.stringify({ report: aiReportHtml }),
         };
     } catch (error) {
-        console.error(error);
+        console.error("AI report generation failed:", error);
+        // エラーが発生した場合は、エラーメッセージを返します
         return {
             statusCode: 500,
-            body: JSON.stringify({ report: "<h3>エラー</h3><p>AIレポートの生成に失敗しました。時間をおいて再度お試しください。</p>" }),
+            body: JSON.stringify({ report: "<h3>エラー</h3><p>AIレポートの生成に失敗しました。APIキーや設定を確認してください。</p>" }),
         };
     }
 };
