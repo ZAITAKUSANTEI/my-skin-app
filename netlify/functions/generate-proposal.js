@@ -1,9 +1,31 @@
-// OpenAIのライブラリをインポートします
-const OpenAI = require('openai');
+// Google Cloud Vertex AIのライブラリをインポートします
+const { VertexAI } = require('@google-cloud/vertexai');
 
-// Netlifyに設定するOpenAIのAPIキーを安全に読み込みます
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+// Netlifyの環境変数からBase64エンコードされたキーを読み込みます
+const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
+
+// Base64から元のJSON形式にデコード（復元）します
+const credentialsJson = Buffer.from(gcpSaKeyBase64, 'base64').toString('utf8');
+const credentials = JSON.parse(credentialsJson);
+
+// VertexAIの初期化設定
+const vertex_ai = new VertexAI({
+  project: credentials.project_id, // プロジェクトIDをキーファイルから取得
+  location: 'asia-northeast1', // 東京リージョン
+  credentials,
+});
+
+// 使用するAIモデルを指定
+const model = 'gemini-1.5-flash-001';
+
+// AIモデルのインスタンスを作成
+const generativeModel = vertex_ai.getGenerativeModel({
+  model: model,
+  generationConfig: {
+    maxOutputTokens: 8192,
+    temperature: 1,
+    topP: 0.95,
+  },
 });
 
 // Netlifyがこの関数を呼び出します
@@ -17,7 +39,7 @@ exports.handler = async function(event) {
         // フロントエンドから送られてきた肌スコアを受け取ります
         const { scores } = JSON.parse(event.body);
         
-        [cite_start]// CSVから読み込んだ治療法データベースです [cite: 176]
+        // CSVから読み込んだ治療法データベースです
         const treatmentsDB = `カテゴリ,治療法名,特徴,価格（円）
 しわ,ボトックス,表情ジワの改善に即効性あり,20000
 しわ,ヒアルロン酸注入,ボリュームアップに効果的,50000
@@ -55,7 +77,7 @@ exports.handler = async function(event) {
 脂肪除去,HIFU（脂肪層）,脂肪層にピンポイント照射,100000
 脂肪除去,カベリン注射,植物由来成分の脂肪融解,25000`;
         
-        // ChatGPTへの指示書（プロンプト）です
+        // Geminiへの指示書（プロンプト）です
         const userPrompt = `
 # クライアントの肌診断スコア (100点満点)
 - くすみ: ${scores.dullness}
@@ -75,23 +97,10 @@ ${treatmentsDB}
 5. 全体を通して、専門的でありながらも、利用者に寄り添うような温かいトーンで記述してください。
 6. 回答は必ずHTML形式で出力してください。診断結果のタイトルは<h3>タグ、各治療法の提案は<div>で囲み、治療法名は<h5>タグ、特徴と価格は<p>タグを使用してください。`;
 
-        // ChatGPTにリクエストを送信します
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [
-                {
-                    role: "system",
-                    content: "あなたは優秀な美容カウンセラーです。"
-                },
-                {
-                    role: "user",
-                    content: userPrompt
-                }
-            ],
-        });
-
-        const aiReportHtml = completion.choices[0].message.content;
-
+        // Geminiにリクエストを送信します
+        const result = await generativeModel.generateContent(userPrompt);
+        const aiReportHtml = result.response.candidates[0].content.parts[0].text;
+        
         // フロントエンドにHTML形式のレポートを返します
         return {
             statusCode: 200,
@@ -102,7 +111,7 @@ ${treatmentsDB}
         // エラーが発生した場合は、エラーメッセージを返します
         return {
             statusCode: 500,
-            body: JSON.stringify({ report: "<h3>エラー</h3><p>AIレポートの生成に失敗しました。APIキーや設定を確認してください。</p>" }),
+            body: JSON.stringify({ report: "<h3>エラー</h3><p>Vertex AIレポートの生成に失敗しました。APIキーや設定を確認してください。</p>" }),
         };
     }
 };
