@@ -10,9 +10,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google-cloud/vertexai": "^1.10.0",
-    "@google-cloud/vision": "^5.3.3",
-    "google-auth-library": "^9.15.1",
+    "@google-cloud/vertexai": "^1.11.0",
+    "@google-cloud/vision": "^5.4.0",
+    "google-auth-library": "^9.18.0",
     "lambda-multipart-parser": "^1.0.1"
   }
 }
