@@ -1,2 +1,7 @@
+# ビルド設定（この部分は元の設定を残します）
 [build]
   functions = "netlify/functions"
+
+# Functions の設定（この部分を追記します）
+[functions]
+  timeout = 60
