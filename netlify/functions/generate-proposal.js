@@ -10,7 +10,6 @@ exports.handler = async function(event) {
     try {
         const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
 
-        // ★★★ 環境変数が存在するか確認 ★★★
         if (!gcpSaKeyBase64) {
             console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
             throw new Error("サーバーの設定エラーです。環境変数が設定されていません。");
@@ -20,19 +19,24 @@ exports.handler = async function(event) {
         const credentials = JSON.parse(credentialsJson);
         const projectId = credentials.project_id;
 
-        // ★★★ 認証情報が正しく読み込まれているか確認 ★★★
         if (!credentials.client_email || !credentials.private_key) {
             console.error("Authentication Error: Service account credentials not parsed correctly.");
             throw new Error("サービスアカウントの認証情報が正しく設定されていません。");
         }
         console.log(`Successfully parsed credentials for service account: ${credentials.client_email}`);
 
+        // ★★★ 修正点：認証方法をより具体的に指定 ★★★
+        const explicitCredentials = {
+            client_email: credentials.client_email,
+            private_key: credentials.private_key,
+        };
+
         // Vertex AI (Gemini)
-        const vertexAI = new VertexAI({ project: projectId, location: 'asia-northeast1', credentials });
+        const vertexAI = new VertexAI({ project: projectId, location: 'asia-northeast1', credentials: explicitCredentials });
         const generativeModel = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' });
 
         // Vision API
-        const visionClient = new ImageAnnotatorClient({ credentials });
+        const visionClient = new ImageAnnotatorClient({ credentials: explicitCredentials });
         
         // --- ここからがメインの処理 ---
         if (event.httpMethod !== 'POST') {
