@@ -3,74 +3,68 @@ const { VertexAI } = require('@google-cloud/vertexai');
 const { ImageAnnotatorClient } = require('@google-cloud/vision');
 const multipart = require('lambda-multipart-parser');
 
-// --- 認証情報の設定 ---
-// Netlifyの環境変数からBase64エンコードされたキーを読み込み、デコード（復元）
-const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
-
-// ★★★ デバッグステップ：環境変数が存在するか確認 ★★★
-if (!gcpSaKeyBase64) {
-    console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
-    // フロントエンドには一般的なエラーを返す
-    return {
-        statusCode: 500,
-        body: JSON.stringify({ message: "サーバーの設定エラーです。環境変数が設定されていません。" }),
-    };
-}
-
-const credentialsJson = Buffer.from(gcpSaKeyBase64, 'base64').toString('utf8');
-const credentials = JSON.parse(credentialsJson);
-const projectId = credentials.project_id;
-
-// ★★★ デバッグステップ：認証情報が正しく読み込まれているか確認 ★★★
-if (!credentials.client_email || !credentials.private_key) {
-    console.error("Authentication Error: Service account credentials not parsed correctly from environment variable.");
-    throw new Error("サービスアカウントの認証情報が正しく設定されていません。Base64のエンコードが正しいか確認してください。");
-}
-console.log(`Successfully parsed credentials for service account: ${credentials.client_email}`);
-// ★★★ デバッグここまで ★★★
-
-
-// --- 各AIクライアントの初期化 ---
-// Vertex AI (Gemini)
-const vertexAI = new VertexAI({ project: projectId, location: 'asia-northeast1', credentials });
-const generativeModel = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' });
-
-// Vision API
-const visionClient = new ImageAnnotatorClient({ credentials });
-
 // Netlifyのメイン関数
 exports.handler = async function(event) {
-    if (event.httpMethod !== 'POST') {
-        return { statusCode: 405, body: 'Method Not Allowed' };
-    }
-
+    // --- 認証情報とAIクライアントの初期化 ---
+    // この関数が呼び出されるたびに、認証情報をチェックし、AIクライアントを準備します。
     try {
-        // --- 1. フロントエンドから画像データを受け取る ---
+        const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
+
+        // ★★★ 環境変数が存在するか確認 ★★★
+        if (!gcpSaKeyBase64) {
+            console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
+            throw new Error("サーバーの設定エラーです。環境変数が設定されていません。");
+        }
+
+        const credentialsJson = Buffer.from(gcpSaKeyBase64, 'base64').toString('utf8');
+        const credentials = JSON.parse(credentialsJson);
+        const projectId = credentials.project_id;
+
+        // ★★★ 認証情報が正しく読み込まれているか確認 ★★★
+        if (!credentials.client_email || !credentials.private_key) {
+            console.error("Authentication Error: Service account credentials not parsed correctly.");
+            throw new Error("サービスアカウントの認証情報が正しく設定されていません。");
+        }
+        console.log(`Successfully parsed credentials for service account: ${credentials.client_email}`);
+
+        // Vertex AI (Gemini)
+        const vertexAI = new VertexAI({ project: projectId, location: 'asia-northeast1', credentials });
+        const generativeModel = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' });
+
+        // Vision API
+        const visionClient = new ImageAnnotatorClient({ credentials });
+        
+        // --- ここからがメインの処理 ---
+        if (event.httpMethod !== 'POST') {
+            return { statusCode: 405, body: 'Method Not Allowed' };
+        }
+
+        // 1. フロントエンドから画像データを受け取る
         const result = await multipart.parse(event);
         const frontImage = result.files.find(f => f.fieldname === 'frontImage');
         if (!frontImage) {
             throw new Error('正面画像が見つかりません。');
         }
 
-        // --- 2. Vision APIで顔を分析する ---
+        // 2. Vision APIで顔を分析する
         const [visionResult] = await visionClient.faceDetection(frontImage.content);
         const faceAnnotations = visionResult.faceAnnotations;
         if (!faceAnnotations || faceAnnotations.length === 0) {
             throw new Error('顔を検出できませんでした。');
         }
-        const face = faceAnnotations[0]; // 最初の顔データを対象とする
+        const face = faceAnnotations[0];
 
-        // --- 3. 評価基準に基づいてスコアを算出する ---
+        // 3. 評価基準に基づいてスコアを算出する
         const scores = calculateScores(face);
 
-        // --- 4. Vertex AI (Gemini) への指示書を作成する ---
+        // 4. Vertex AI (Gemini) への指示書を作成する
         const prompt = createPrompt(scores, face);
 
-        // --- 5. Vertex AI (Gemini) で提案レポートを生成する ---
+        // 5. Vertex AI (Gemini) で提案レポートを生成する
         const geminiResult = await generativeModel.generateContent(prompt);
         const reportHtml = geminiResult.response.candidates[0].content.parts[0].text;
 
-        // --- 6. フロントエンドに結果を返す ---
+        // 6. フロントエンドに結果を返す
         return {
             statusCode: 200,
             body: JSON.stringify({ reportHtml, scores }),
@@ -87,36 +81,20 @@ exports.handler = async function(event) {
 
 // --- ヘルパー関数 ---
 
-/**
- * Vision APIの分析結果から5項目のスコアを計算する関数
- * @param {object} face - Vision APIのfaceAnnotationsオブジェクト
- * @returns {object} 5項目のスコア
- */
 function calculateScores(face) {
     const likelihoods = ['UNKNOWN', 'VERY_UNLIKELY', 'UNLIKELY', 'POSSIBLE', 'LIKELY', 'VERY_LIKELY'];
     const joyScore = likelihoods.indexOf(face.joyLikelihood) * 20;
     const sorrowScore = likelihoods.indexOf(face.sorrowLikelihood) * 20;
-    
-    // なめらかさ(しわ): 喜びの表情が少ないほど、また悲しみの表情が少ないほど高スコア
     const smoothness = 100 - ((joyScore + sorrowScore) / 2);
-
-    // ハリ(たるみ): 顔の傾きが少なく、驚き度が低いほど高スコア
     const tiltAngleScore = 100 - Math.abs(face.tiltAngle);
     const surpriseScore = likelihoods.indexOf(face.surpriseLikelihood) * 20;
     const firmness = (tiltAngleScore + (100 - surpriseScore)) / 2;
-
-    // くすみ: 肌が明るく、露出不足でないほど高スコア
     const underExposedScore = likelihoods.indexOf(face.underExposedLikelihood) * 20;
     const dullness = 100 - underExposedScore;
-
-    // シミ・毛穴はVisionAPIでは直接判断が難しいため、他の要素から類推
-    // ぼやけ度が低いほど、肌がクリアであるとみなし、高スコアとする
     const blurredScore = likelihoods.indexOf(face.blurredLikelihood) * 20;
     const spots = 100 - blurredScore;
-    const pores = 100 - blurredScore; // 毛穴も同様のロジックで代用
-
+    const pores = 100 - blurredScore;
     const finalize = (score) => Math.max(0, Math.min(Math.round(score), 100));
-
     return {
         dullness: finalize(dullness),
         smoothness: finalize(smoothness),
@@ -126,14 +104,7 @@ function calculateScores(face) {
     };
 }
 
-/**
- * Vertex AI (Gemini) に送るための指示書（プロンプト）を作成する関数
- * @param {object} scores - 計算されたスコア
- * @param {object} face - Vision APIの分析結果
- * @returns {string} 生成されたプロンプト
- */
 function createPrompt(scores, face) {
-    // 治療法データベース
     const treatmentsDB = `カテゴリ,治療法名,特徴,価格（円）
 しわ,ボトックス,表情ジワの改善に即効性あり,20000
 しわ,ヒアルロン酸注入,ボリュームアップに効果的,50000
@@ -170,8 +141,6 @@ function createPrompt(scores, face) {
 脂肪除去,脂肪吸引,外科的な脂肪除去,300000
 脂肪除去,HIFU（脂肪層）,脂肪層にピンポイント照射,100000
 脂肪除去,カベリン注射,植物由来成分の脂肪融解,25000`;
-
-    // Vision APIの分析結果を要約
     const visionAnalysisSummary = `
 - 喜びの可能性: ${face.joyLikelihood}
 - 悲しみの可能性: ${face.sorrowLikelihood}
@@ -180,8 +149,6 @@ function createPrompt(scores, face) {
 - ぼやけの可能性: ${face.blurredLikelihood}
 - 顔の傾き: ${face.tiltAngle.toFixed(2)}度
 `;
-
-    // AIへの最終的な指示書
     return `
 あなたは日本で最も信頼されている美容カウンセラーです。
 以下の2つの情報をもとに、クライアントにパーソナライズされた美容プランを提案してください。
@@ -207,4 +174,3 @@ ${treatmentsDB}
 5. 回答は必ずHTML形式で出力してください。診断結果のタイトルは<h3>タグ、各治療法の提案は<div>で囲み、治療法名は<h5>タグ、特徴と価格は<p>タグを使用してください。
 `;
 }
-
