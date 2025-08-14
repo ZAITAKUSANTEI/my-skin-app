@@ -3,5 +3,6 @@
   functions = "netlify/functions"
 
 # Functions の設定（この部分を追記します）
+# Netlifyの無料プランではタイムアウトは最大26秒です。安全のため25秒に設定します。
 [functions]
-  timeout = 60
+  timeout = 25
