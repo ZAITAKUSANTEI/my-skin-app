@@ -3,18 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI肌診断 (最終ロジック版)</title>
+    <title>AI肌診断 (Vision API連携版)</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-    <!-- MediaPipe for face landmarks -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <!-- OpenCV.js for advanced image processing -->
-    <script src="https://docs.opencv.org/4.8.0/opencv.js" async></script>
     <!-- Chart.js for radar chart -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
@@ -39,14 +34,6 @@
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
-        }
-        .api-error-notice {
-            background-color: rgba(255, 235, 59, 0.1);
-            border-left: 4px solid #FBC02D;
-            padding: 12px;
-            margin-bottom: 16px;
-            border-radius: 8px;
-            font-size: 0.9em;
         }
         /* Image Editor Styles */
         .image-editor {
@@ -105,13 +92,13 @@
     <div class="container mx-auto p-4 md:p-8 max-w-4xl">
         <header class="text-center mb-8">
             <h1 class="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 mb-2">AI Skin Analysis</h1>
-            <p class="text-gray-400">あなたの肌を、AIが5つの観点から多角的に分析します。</p>
+            <p class="text-gray-400">あなたの肌を、AIが多角的に分析し、最適な治療法を提案します。</p>
         </header>
 
         <main>
             <div id="upload-section" class="glassmorphism rounded-2xl p-6 md:p-8 shadow-2xl">
                 <h2 class="text-2xl font-semibold mb-4 text-center">3枚の顔写真をアップロード</h2>
-                <p class="text-gray-400 text-center mb-6">ガイド線に合わせ、顔の大きさと明るさを補正して、より正確な診断へ。</p>
+                <p class="text-gray-400 text-center mb-6">ガイド線に合わせ、顔の大きさと明るさを補正してください。</p>
                 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div id="editor-container-front"></div>
@@ -129,7 +116,7 @@
             <div id="result-section" class="mt-10 hidden">
                 <div id="loader-container" class="flex flex-col items-center justify-center p-8">
                     <div class="loader"></div>
-                    <p id="progress-text" class="mt-4 text-lg text-gray-300"></p>
+                    <p id="progress-text" class="mt-4 text-lg text-gray-300">AIが分析中です...</p>
                 </div>
                 <div id="report-container" class="glassmorphism rounded-2xl p-6 md:p-8 shadow-2xl hidden prose prose-invert max-w-none prose-h3:text-blue-400 prose-strong:text-white">
                 </div>
@@ -138,38 +125,7 @@
     </div>
 
     <script type="module">
-        // --- Initialization ---
-        const cvReady = new Promise((resolve, reject) => {
-            const timeout = 15000;
-            const startTime = Date.now();
-            const checkCv = () => {
-                if (Date.now() - startTime > timeout) {
-                    reject(new Error("画像処理ライブラリの読み込みがタイムアウトしました。"));
-                    return;
-                }
-                if (typeof cv !== 'undefined' && cv.Mat) {
-                    if (typeof cv.onRuntimeInitialized === 'function' && !cv.runtimeInitialized) {
-                         cv.onRuntimeInitialized = () => {
-                             console.log("OpenCV.js runtime initialized.");
-                             cv.runtimeInitialized = true;
-                             resolve();
-                         };
-                    } else {
-                        console.log("OpenCV.js was already initialized.");
-                        resolve();
-                    }
-                } else {
-                    setTimeout(checkCv, 100);
-                }
-            };
-            checkCv();
-        });
-
-        const editors = {};
-        const editorKeys = ['front', 'open', 'close'];
-        const editorLabels = ['① 正面画像', '② 目を開いた画像', '③ 目を閉じた画像'];
-
-        // --- Image Editor Class ---
+        // --- Image Editor Class (画像アップロードとプレビュー表示を担当) ---
         class ImageEditor {
              constructor(containerId, label) {
                 this.container = document.getElementById(containerId);
@@ -181,7 +137,7 @@
                 this.isDragging = false;
                 this.lastX = 0;
                 this.lastY = 0;
-                this.file = null;
+                this.file = null; // アップロードされたファイルオブジェクトを保持
                 this.createDOM();
             }
 
@@ -220,7 +176,7 @@
             }
             
             handleFileSelect(event) {
-                this.file = event.target.files[0];
+                this.file = event.target.files[0]; // ファイルオブジェクトを保存
                 if (this.file) {
                     const reader = new FileReader();
                     reader.onload = (e) => {
@@ -256,21 +212,13 @@
             startDrag(e) { if (!this.image) return; this.isDragging = true; this.lastX = e.clientX; this.lastY = e.clientY; }
             drag(e) { if (this.isDragging) { const dx = e.clientX - this.lastX; const dy = e.clientY - this.lastY; this.offsetX += dx; this.offsetY += dy; this.lastX = e.clientX; this.lastY = e.clientY; this.draw(); } }
             stopDrag() { this.isDragging = false; }
-            
-            getProcessedImage() {
-                if (!this.image) return null;
-                return new Promise(resolve => {
-                    const img = new Image();
-                    img.onload = () => resolve(img);
-                    img.src = this.canvas.toDataURL('image/png');
-                });
-            }
         }
 
         // --- Main App Logic ---
-        editorKeys.forEach((key, index) => {
-            editors[key] = new ImageEditor(`editor-container-${key}`, editorLabels[index]);
-        });
+        const editors = {};
+        editors['front'] = new ImageEditor('editor-container-front', '① 正面画像');
+        editors['open'] = new ImageEditor('editor-container-open', '② 目を開いた画像');
+        editors['close'] = new ImageEditor('editor-container-close', '③ 目を閉じた画像');
 
         const analyzeButton = document.getElementById('analyze-button');
         const resultSection = document.getElementById('result-section');
@@ -279,7 +227,7 @@
         const progressText = document.getElementById('progress-text');
 
         function checkAllFilesUploaded() {
-            const allUploaded = editorKeys.every(key => editors[key].file);
+            const allUploaded = Object.values(editors).every(editor => editor.file);
             analyzeButton.disabled = !allUploaded;
         }
         checkAllFilesUploaded();
@@ -289,369 +237,57 @@
             loaderContainer.classList.remove('hidden');
             reportContainer.classList.add('hidden');
             analyzeButton.disabled = true;
-            const updateProgress = (text) => { progressText.innerText = text; };
+            progressText.innerText = 'AIが分析中です...';
 
-// ▼▼▼ この try から catch までを丸ごと差し替えてください ▼▼▼
+            // FormDataオブジェクトを作成して、3枚の画像を格納
+            const formData = new FormData();
+            formData.append('frontImage', editors['front'].file, 'front.jpg');
+            formData.append('openImage', editors['open'].file, 'open.jpg');
+            formData.append('closeImage', editors['close'].file, 'close.jpg');
+
             try {
-                updateProgress("ステップ 1/7: 画像処理ライブラリを準備...");
-                await cvReady;
-
-                updateProgress("ステップ 2/7: 表示に合わせて画像を調整中...");
-                const images = {};
-                for (const key of editorKeys) {
-                    images[key] = await editors[key].getProcessedImage();
-                }
-                
-                updateProgress("ステップ 3/7: 明るさを自動補正しています...");
-                const correctedImages = {};
-                for (const key of editorKeys) {
-                    correctedImages[key] = await correctBrightness(images[key]);
-                }
-
-                updateProgress("ステップ 4/7: AIモデルを準備しています...");
-                const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-                faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-                
-                updateProgress("ステップ 5/7, 6/7: 顔の特徴を分析中...");
-                const scores = await analyzeImages(correctedImages, faceMesh, updateProgress);
-                const finalScores = {
-                    dullness: finalizeScore(scores.dullness),
-                    smoothness: finalizeScore(scores.smoothness),
-                    firmness: finalizeScore(scores.firmness),
-                    spots: finalizeScore(scores.spots),
-                    pores: finalizeScore(scores.pores)
-                };
-                
-                updateProgress("ステップ 7/7: AIが診断レポートを作成しています...");
-
-                // 新しいAI呼び出し部分
+                // バックエンドに画像データを送信
                 const response = await fetch('/.netlify/functions/generate-proposal', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ scores: finalScores })
+                    body: formData, // JSONではなくFormDataを送信
                 });
 
                 if (!response.ok) {
-                    // エラーの場合は、ひとまず簡易レポートを表示
-                    console.warn("AI report generation failed, showing fallback report.");
-                    const mockReport = generateMockReport(scores);
-                    reportContainer.innerHTML = mockReport;
-                    setTimeout(() => drawRadarChart(scores), 0);
-                    throw new Error('AIレポートの生成に失敗しました。簡易レポートを表示します。');
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'サーバーでエラーが発生しました。');
                 }
-                
-                const result = await response.json();
-                reportContainer.innerHTML = result.report; // AIが作ったHTMLを表示
-                setTimeout(() => drawRadarChart(scores), 0); // レーダーチャートも表示
 
-                loaderContainer.classList.add('hidden');
-                reportContainer.classList.remove('hidden');
+                const result = await response.json();
+                
+                // バックエンドから返されたHTMLレポートとスコアを表示
+                reportContainer.innerHTML = result.reportHtml;
+                if (result.scores) {
+                    drawRadarChart(result.scores);
+                }
 
             } catch (error) {
                 console.error("解析中にエラーが発生しました:", error);
-                progressText.innerText = `エラー: ${error.message}`;
+                reportContainer.innerHTML = `<h3>エラー</h3><p>解析中に問題が発生しました。時間をおいて再度お試しください。<br>詳細: ${error.message}</p>`;
+            } finally {
                 loaderContainer.classList.add('hidden');
                 reportContainer.classList.remove('hidden');
-            } 
-            // ▲▲▲ ここまで ▲▲▲
+                analyzeButton.disabled = false;
+            }
         });
-        
-        async function correctBrightness(image) {
-            let src = cv.imread(image);
-            let lab = new cv.Mat();
-            cv.cvtColor(src, lab, cv.COLOR_RGBA2RGB);
-            cv.cvtColor(lab, lab, cv.COLOR_RGB2Lab);
-            let labPlanes = new cv.MatVector();
-            cv.split(lab, labPlanes);
-            let lPlane = labPlanes.get(0);
-            let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
-            clahe.apply(lPlane, lPlane);
-            labPlanes.set(0, lPlane);
-            cv.merge(labPlanes, lab);
-            cv.cvtColor(lab, src, cv.COLOR_Lab2RGB);
-            const tempCanvas = document.createElement('canvas');
-            cv.imshow(tempCanvas, src);
-            [src, lab, lPlane, clahe, labPlanes].forEach(m => m.delete());
-            return new Promise(resolve => {
-                const img = new Image();
-                img.onload = () => resolve(img);
-                img.src = tempCanvas.toDataURL();
-            });
-        }
-
-        async function analyzeImages(images, faceMesh, updateProgress) {
-            updateProgress("ステップ 5/7: 顔の特徴点を検出しています...");
-            const landmarks = {
-                front: await getFaceLandmarks(images.front, faceMesh),
-                open: await getFaceLandmarks(images.open, faceMesh),
-                close: await getFaceLandmarks(images.close, faceMesh)
-            };
-            if (!landmarks.front || !landmarks.open || !landmarks.close) throw new Error("顔の特徴点を検出できませんでした。");
-
-            updateProgress("ステップ 6/7: 各項目を詳細に分析しています...");
-            const [dullness, smoothness, firmness, spots, pores] = await Promise.all([
-                calculateDullness(images.front, landmarks.front),
-                calculateSmoothness(images.open, images.close, landmarks),
-                calculateFirmness(landmarks.front),
-                calculateSpots(images.front, landmarks.front),
-                calculatePores(images.front, landmarks.front)
-            ]);
-            return { dullness, smoothness, firmness, spots, pores };
-        }
-
-        async function getFaceLandmarks(image, faceMesh) {
-            const results = await new Promise(resolve => {
-                faceMesh.onResults(r => resolve(r));
-                faceMesh.send({ image });
-            });
-            return results.multiFaceLandmarks && results.multiFaceLandmarks[0] ? results.multiFaceLandmarks[0] : null;
-        }
-        
-        const LANDMARK_AREAS = {
-            FOREHEAD: [103, 104, 69, 105, 107, 336, 299, 333, 332],
-            CHEEK_L: [350, 347, 346, 279, 340, 411, 352],
-            CHEEK_R: [121, 118, 117, 49, 111, 187, 123],
-            EYE_L: [362, 385, 387, 263, 373, 380],
-            EYE_R: [33, 160, 158, 133, 153, 144],
-            NOSE: [1, 4, 5, 48, 278, 168],
-            CHEEK_TOP_L: [346, 347, 350],
-            CHEEK_TOP_R: [117, 118, 121],
-            NOSE_TIP: [1, 4, 5],
-            // [修正点] 輪郭を除いた顔の中心部を定義
-            INNER_FACE: [10, 338, 297, 332, 299, 336, 107, 109, 67, 103, 54, 21, 162, 127, 234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152]
-        };
-
-        function getMaskFromLandmarks(image, landmarks, indices) {
-            let mask = cv.Mat.zeros(image.height, image.width, cv.CV_8UC1);
-            const points = indices.map(i => [landmarks[i].x * image.width, landmarks[i].y * image.height]).flat();
-            const pointsMat = cv.matFromArray(points.length / 2, 1, cv.CV_32SC2, points);
-            const hull = new cv.Mat();
-            cv.convexHull(pointsMat, hull, false, true);
-            const hullPoints = new cv.MatVector();
-            hullPoints.push_back(hull);
-            cv.fillPoly(mask, hullPoints, new cv.Scalar(255));
-            pointsMat.delete(); hull.delete(); hullPoints.delete();
-            return mask;
-        }
-
-        function calculateDullness(image, landmarks) {
-            const areaIndices = [...LANDMARK_AREAS.FOREHEAD, ...LANDMARK_AREAS.CHEEK_L, ...LANDMARK_AREAS.CHEEK_R];
-            let src = cv.imread(image);
-            let mask = getMaskFromLandmarks(image, landmarks, areaIndices);
-            let lab = new cv.Mat();
-            cv.cvtColor(src, lab, cv.COLOR_RGB2Lab);
-            let mean = new cv.Mat();
-            let stdDev = new cv.Mat();
-            cv.meanStdDev(lab, mean, stdDev, mask);
-            const luminance = mean.data64F[0];
-            const colorStdDev = (stdDev.data64F[1] + stdDev.data64F[2]) / 2;
-            const saturation = cv.mean(src, mask)[1];
-            const clarityScore = (luminance / 255) * 100;
-            const evennessScore = Math.max(0, 100 - colorStdDev * 10);
-            const vibranceScore = (saturation / 255) * 100;
-            const score = (clarityScore * 0.5) + (evennessScore * 0.3) + (vibranceScore * 0.2);
-            [src, mask, lab, mean, stdDev].forEach(m => m.delete());
-            return score;
-        }
-
-        function calculateSmoothness(imgOpen, imgClose, landmarks) {
-            const getWrinkleAmount = (image, landmarkData, indices) => {
-                const points = indices.map(i => [landmarkData[i].x * image.width, landmarkData[i].y * image.height]).flat();
-                const pointsMat = cv.matFromArray(points.length / 2, 1, cv.CV_32SC2, points);
-                const rect = cv.boundingRect(pointsMat);
-                pointsMat.delete();
-                let src = cv.imread(image);
-                let gray = new cv.Mat();
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                if (rect.x < 0) rect.x = 0; if (rect.y < 0) rect.y = 0;
-                if (rect.x + rect.width > gray.cols) rect.width = gray.cols - rect.x;
-                if (rect.y + rect.height > gray.rows) rect.height = gray.rows - rect.y;
-                if (rect.width <= 0 || rect.height <= 0) { [src, gray].forEach(m => m.delete()); return 0; }
-                let roi = gray.roi(rect);
-                let edges = new cv.Mat();
-                cv.Canny(roi, edges, 50, 150);
-                const amount = cv.mean(edges)[0];
-                [src, gray, roi, edges].forEach(m => m.delete());
-                return amount;
-            };
-            const openForehead = getWrinkleAmount(imgOpen, landmarks.open, LANDMARK_AREAS.FOREHEAD);
-            const closeForehead = getWrinkleAmount(imgClose, landmarks.close, LANDMARK_AREAS.FOREHEAD);
-            const openEyes = (getWrinkleAmount(imgOpen, landmarks.open, LANDMARK_AREAS.EYE_L) + getWrinkleAmount(imgOpen, landmarks.open, LANDMARK_AREAS.EYE_R)) / 2;
-            const closeEyes = (getWrinkleAmount(imgClose, landmarks.close, LANDMARK_AREAS.EYE_L) + getWrinkleAmount(imgClose, landmarks.close, LANDMARK_AREAS.EYE_R)) / 2;
-            const maxWrinkles = openForehead + closeEyes;
-            const minWrinkles = closeForehead + openEyes;
-            const absoluteAmount = minWrinkles;
-            const changeAmount = Math.abs(maxWrinkles - minWrinkles);
-            let score = 0;
-            if (absoluteAmount < 5 && changeAmount < 10) { score = 90 + (5 - absoluteAmount); }
-            else if (absoluteAmount > 15 && changeAmount < 10) { score = 20 - absoluteAmount; }
-            else { score = 40 + changeAmount * 2; }
-            return score;
-        }
-
-        function calculateFirmness(landmarks) {
-            const noseTip = landmarks[1], mouthCornerL = landmarks[61];
-            const mouthCornerR = landmarks[291], chin = landmarks[152];
-            const mouthCornerAvgY = (mouthCornerL.y + mouthCornerR.y) / 2;
-            const faceHeightFactor = chin.y - noseTip.y;
-            if (faceHeightFactor <= 0) return 50;
-            const sagRatio = (mouthCornerAvgY - noseTip.y) / faceHeightFactor;
-            let score = 100 - (sagRatio - 0.2) * 200;
-            return score;
-        }
-
-        function calculateSpots(image, landmarks) {
-            // [修正点] 輪郭を除いた顔の中心部(INNER_FACE)をマスクとして使用
-            const areaIndices = LANDMARK_AREAS.INNER_FACE;
-            let src = cv.imread(image);
-            let mask = getMaskFromLandmarks(image, landmarks, areaIndices);
-            let lab = new cv.Mat();
-            cv.cvtColor(src, lab, cv.COLOR_RGB2Lab);
-            let lChannel = new cv.MatVector();
-            cv.split(lab, lChannel);
-            let meanL = cv.mean(lChannel.get(0), mask)[0];
-            let darkMask = new cv.Mat();
-            cv.threshold(lChannel.get(0), darkMask, meanL - 20, 255, cv.THRESH_BINARY_INV);
-            cv.bitwise_and(darkMask, mask, darkMask); // マスクの範囲内のみを対象とする
-            let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-            cv.morphologyEx(darkMask, darkMask, cv.MORPH_OPEN, kernel);
-            let contours = new cv.MatVector();
-            let hierarchy = new cv.Mat();
-            cv.findContours(darkMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-            let spotCount = 0;
-            for (let i = 0; i < contours.size(); ++i) {
-                if (cv.contourArea(contours.get(i)) > 25) spotCount++;
-                contours.get(i).delete();
-            }
-            [src, mask, lab, lChannel, darkMask, contours, hierarchy, kernel].forEach(m => m.delete());
-            return 100 - (spotCount * 5);
-        }
-
-        function calculatePores(image, landmarks) {
-            const areaIndices = [...LANDMARK_AREAS.NOSE_TIP, ...LANDMARK_AREAS.CHEEK_TOP_L, ...LANDMARK_AREAS.CHEEK_TOP_R];
-            let src = cv.imread(image);
-            let mask = getMaskFromLandmarks(image, landmarks, areaIndices);
-            let gray = new cv.Mat();
-            cv.cvtColor(src, gray, cv.COLOR_RGB2GRAY);
-            let highpass = new cv.Mat();
-            cv.Laplacian(gray, highpass, cv.CV_64F);
-            const textureAmount = cv.mean(highpass, mask)[0];
-            const score = 100 - Math.abs(textureAmount) * 10;
-            [src, mask, gray, highpass].forEach(m => m.delete());
-            return score;
-        }
-
-        function finalizeScore(score) {
-            return Math.max(30, Math.min(Math.round(score), 100));
-        }
-
-        async function generateReportWithGemini(scores) {
-            // This function is kept for future deployment, but will fail in the current environment.
-            // The fallback `generateMockReport` will be used instead.
-            const finalScores = {
-                dullness: finalizeScore(scores.dullness),
-                smoothness: finalizeScore(scores.smoothness),
-                firmness: finalizeScore(scores.firmness),
-                spots: finalizeScore(scores.spots),
-                pores: finalizeScore(scores.pores)
-            };
-            const prompt = `
-                // Prompt for Gemini API
-            `;
-            let chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
-            const payload = { contents: chatHistory };
-            const apiKey = "";
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-            const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-            const result = await response.json();
-            if (result.candidates && result.candidates.length > 0) {
-                let text = result.candidates[0].content.parts[0].text;
-                // HTML conversion logic
-                return text;
-            } else {
-                throw new Error("AIからの応答が空でした。");
-            }
-        }
-
-        function generateMockReport(scores) {
-            const finalScores = {
-                dullness: finalizeScore(scores.dullness),
-                smoothness: finalizeScore(scores.smoothness),
-                firmness: finalizeScore(scores.firmness),
-                spots: finalizeScore(scores.spots),
-                pores: finalizeScore(scores.pores)
-            };
-            const getRank = (score) => {
-                if (score >= 70) return { rank: 'A', text: '素晴らしい！', color: 'text-green-400' };
-                if (score >= 50) return { rank: 'B', text: '良好です', color: 'text-blue-400' };
-                return { rank: 'C', text: 'やや注意', color: 'text-yellow-400' };
-            };
-            const ranks = {
-                dullness: getRank(finalScores.dullness),
-                smoothness: getRank(finalScores.smoothness),
-                firmness: getRank(finalScores.firmness),
-                spots: getRank(finalScores.spots),
-                pores: getRank(finalScores.pores)
-            };
-            return `
-                <div class="api-error-notice"><p><strong>お知らせ:</strong> AIによるコメント生成に失敗しました。代わりに、分析スコアに基づいた簡易レポートを表示します。</p></div>
-                <h3 class="text-2xl font-bold mt-6 mb-3 border-b-2 border-blue-400 pb-2">総合評価</h3>
-                <p>画像分析が完了しました。以下に各項目のスコアと評価ランクを示します。</p>
-                <h3 class="text-2xl font-bold mt-6 mb-3 border-b-2 border-blue-400 pb-2">項目別診断</h3>
-                <div class="space-y-4">
-                    <div>
-                        <h5 class="text-lg font-semibold text-purple-300">1. くすみ総合スコア</h5>
-                        <p class="text-sm text-gray-400">評価場所: 額、両頬<br>透明感・色ムラ・血色感を総合的に評価します。</p>
-                        <p>スコア: ${finalScores.dullness} / 100 <span class="ml-4 font-bold ${ranks.dullness.color}">ランク: ${ranks.dullness.rank} (${ranks.dullness.text})</span></p>
-                    </div>
-                    <div>
-                        <h5 class="text-lg font-semibold text-purple-300">2. なめらかさスコア（しわ・復元力）</h5>
-                        <p class="text-sm text-gray-400">評価場所: おでこ、目尻<br>表情の変化に対する、しわのつき方と戻り方を評価します。</p>
-                        <p>スコア: ${finalScores.smoothness} / 100 <span class="ml-4 font-bold ${ranks.smoothness.color}">ランク: ${ranks.smoothness.rank} (${ranks.smoothness.text})</span></p>
-                    </div>
-                    <div>
-                        <h5 class="text-lg font-semibold text-purple-300">3. ハリ・弾力スコア（たるみ）</h5>
-                        <p class="text-sm text-gray-400">評価場所: 顔全体の構造<br>重力に対する肌の抵抗力（たるみの少なさ）を評価します。</p>
-                        <p>スコア: ${finalScores.firmness} / 100 <span class="ml-4 font-bold ${ranks.firmness.color}">ランク: ${ranks.firmness.rank} (${ranks.firmness.text})</span></p>
-                    </div>
-                    <div>
-                        <h5 class="text-lg font-semibold text-purple-300">4. シミ・スポット評価</h5>
-                        <p class="text-sm text-gray-400">評価場所: 顔の中心部（輪郭を除く）<br>治療対象となりうる大きさの、シミやニキビ跡の少なさを評価します。</p>
-                        <p>スコア: ${finalScores.spots} / 100 <span class="ml-4 font-bold ${ranks.spots.color}">ランク: ${ranks.spots.rank} (${ranks.spots.text})</span></p>
-                    </div>
-                    <div>
-                        <h5 class="text-lg font-semibold text-purple-300">5. 毛穴スコア（キメ）</h5>
-                        <p class="text-sm text-gray-400">評価場所: 鼻、両頬のトップ<br>キメの細かさや、毛穴の凹凸の少なさを評価します。</p>
-                        <p>スコア: ${finalScores.pores} / 100 <span class="ml-4 font-bold ${ranks.pores.color}">ランク: ${ranks.pores.rank} (${ranks.pores.text})</span></p>
-                    </div>
-                </div>
-                <div class="mt-8">
-                    <h3 class="text-2xl font-bold mt-6 mb-3 border-b-2 border-blue-400 pb-2">肌バランスチャート</h3>
-                    <canvas id="radarChart"></canvas>
-                </div>
-                <h3 class="text-2xl font-bold mt-6 mb-3 border-b-2 border-blue-400 pb-2">免責事項</h3>
-                <p>このAI診断は、あくまで肌の状態を推定するための参考情報です。医学的な診断に代わるものではありません。正確な診断と治療については、必ず専門の医療機関にご相談ください。</p>
-            `;
-        }
 
         function drawRadarChart(scores) {
-            const finalScores = {
-                dullness: finalizeScore(scores.dullness),
-                smoothness: finalizeScore(scores.smoothness),
-                firmness: finalizeScore(scores.firmness),
-                spots: finalizeScore(scores.spots),
-                pores: finalizeScore(scores.pores)
-            };
-            const ctx = document.getElementById('radarChart').getContext('2d');
-            new Chart(ctx, {
+            // レーダーチャートの描画ロジックは変更なし
+            const radarChartCanvas = document.createElement('canvas');
+            reportContainer.appendChild(radarChartCanvas);
+            
+            new Chart(radarChartCanvas.getContext('2d'), {
                 type: 'radar',
                 data: {
                     labels: ['くすみ', 'なめらかさ(しわ)', 'ハリ(たるみ)', 'シミ', '毛穴'],
                     datasets: [
                         {
                             label: 'あなたのスコア',
-                            data: [finalScores.dullness, finalScores.smoothness, finalScores.firmness, finalScores.spots, finalScores.pores],
+                            data: [scores.dullness, scores.smoothness, scores.firmness, scores.spots, scores.pores],
                             backgroundColor: 'rgba(59, 130, 246, 0.2)',
                             borderColor: 'rgba(59, 130, 246, 1)',
                             pointBackgroundColor: 'rgba(59, 130, 246, 1)',
