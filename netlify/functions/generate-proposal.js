@@ -1,44 +1,50 @@
-// Google Cloudのライブラリと、画像アップロードを処理するためのライブラリをインポート
+// ★★★ 修正点 1: google-auth-library をインポート ★★★
+const { GoogleAuth } = require('google-auth-library');
 const { VertexAI } = require('@google-cloud/vertexai');
 const { ImageAnnotatorClient } = require('@google-cloud/vision');
 const multipart = require('lambda-multipart-parser');
 
 // Netlifyのメイン関数
 exports.handler = async function(event) {
-    // --- 認証情報とAIクライアントの初期化 ---
     try {
         const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
 
-        // 環境変数が存在するか確認
         if (!gcpSaKeyBase64) {
             console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
             throw new Error("サーバーの設定エラーです。環境変数が設定されていません。");
         }
 
         const credentialsJson = Buffer.from(gcpSaKeyBase64, 'base64').toString('utf8');
-        // ★★★ 修正点 1: パースした認証情報オブジェクトをそのまま利用します ★★★
         const credentials = JSON.parse(credentialsJson);
         const projectId = credentials.project_id;
 
-        // 認証情報が正しく読み込まれているか確認
         if (!credentials.client_email || !credentials.private_key || !projectId) {
             console.error("Authentication Error: Service account credentials not parsed correctly or project_id is missing.");
             throw new Error("サービスアカウントの認証情報が正しく設定されていません。");
         }
         console.log(`Successfully parsed credentials for project: ${projectId}`);
 
-        // ★★★ 修正点 2: VertexAIクライアントに完全な認証情報オブジェクトを渡します ★★★
+        // ★★★ 修正点 2: 共有の認証クライアントを作成 ★★★
+        // この方法で認証情報を一元管理し、各クライアントに渡します。
+        // これにより、ライブラリ間の認証処理の差異を吸収できます。
+        const auth = new GoogleAuth({
+            credentials,
+            scopes: 'https://www.googleapis.com/auth/cloud-platform',
+        });
+
+        // ★★★ 修正点 3: 作成した認証クライアントを各サービスに渡す ★★★
+        // Vertex AI
         const vertexAI = new VertexAI({
             project: projectId,
             location: 'asia-northeast1',
-            credentials: credentials // オブジェクト全体を渡す
+            auth: auth, // credentialsの代わりにauthインスタンスを渡す
         });
         const generativeModel = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' });
 
-        // ★★★ 修正点 3: Vision APIクライアントにも完全な認証情報オブジェクトを渡します ★★★
+        // Vision API
         const visionClient = new ImageAnnotatorClient({
-            projectId: projectId, // プロジェクトIDを明示的に指定
-            credentials: credentials // オブジェクト全体を渡す
+            projectId: projectId,
+            auth: auth, // credentialsの代わりにauthインスタンスを渡す
         });
         
         // --- ここからがメインの処理 ---
@@ -46,62 +52,53 @@ exports.handler = async function(event) {
             return { statusCode: 405, body: 'Method Not Allowed' };
         }
 
-        // 1. フロントエンドから画像データを受け取る
         const result = await multipart.parse(event);
         const frontImage = result.files.find(f => f.fieldname === 'frontImage');
         if (!frontImage) {
             throw new Error('正面画像が見つかりません。');
         }
 
-        // 2. Vision APIで顔を分析する
+        console.log("Starting face detection with Vision API...");
         const [visionResult] = await visionClient.faceDetection(frontImage.content);
+        console.log("Face detection successful.");
+
         const faceAnnotations = visionResult.faceAnnotations;
         if (!faceAnnotations || faceAnnotations.length === 0) {
             throw new Error('顔を検出できませんでした。');
         }
         const face = faceAnnotations[0];
 
-        // 3. 評価基準に基づいてスコアを算出する
         const scores = calculateScores(face);
-
-        // 4. Vertex AI (Gemini) への指示書を作成する
         const prompt = createPrompt(scores, face);
 
-        // 5. Vertex AI (Gemini) で提案レポートを生成する
+        console.log("Generating report with Vertex AI...");
         const geminiResult = await generativeModel.generateContent(prompt);
-        // レスポンスの構造を確認し、安全にテキストを取得
+        console.log("Report generation successful.");
+
         const reportHtml = geminiResult?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!reportHtml) {
             console.error("Gemini response is not in the expected format:", JSON.stringify(geminiResult, null, 2));
             throw new Error('AIからのレポート生成に失敗しました。');
         }
 
-
-        // 6. フロントエンドに結果を返す
         return {
             statusCode: 200,
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reportHtml, scores }),
         };
 
     } catch (error) {
         console.error("AI analysis failed:", error);
-        // エラーオブジェクト全体をログに出力すると、より詳細な情報が得られる場合があります
         console.error("Full error object:", JSON.stringify(error, null, 2));
         return {
             statusCode: 500,
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: error.message || "サーバーで不明なエラーが発生しました。" }),
         };
     }
 };
 
 // --- ヘルパー関数 (変更なし) ---
-
 function calculateScores(face) {
     const likelihoods = ['UNKNOWN', 'VERY_UNLIKELY', 'UNLIKELY', 'POSSIBLE', 'LIKELY', 'VERY_LIKELY'];
     const joyScore = likelihoods.indexOf(face.joyLikelihood) * 20;
@@ -124,7 +121,6 @@ function calculateScores(face) {
         pores: finalize(pores),
     };
 }
-
 function createPrompt(scores, face) {
     const treatmentsDB = `カテゴリ,治療法名,特徴,価格（円）
 しわ,ボトックス,表情ジワの改善に即効性あり,20000
