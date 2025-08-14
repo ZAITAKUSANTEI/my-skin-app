@@ -2,7 +2,7 @@
 [build]
   functions = "netlify/functions"
 
-# Functions の設定（この部分を追記します）
-# Netlifyの無料プランではタイムアウトは最大26秒です。安全のため25秒に設定します。
-[functions]
+# 'generate-proposal'という名前の関数に個別に設定を適用します
+[functions."generate-proposal"]
+  # タイムアウトを25秒に設定します
   timeout = 25
