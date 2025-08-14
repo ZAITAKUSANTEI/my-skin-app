@@ -6,39 +6,40 @@ const multipart = require('lambda-multipart-parser');
 // Netlifyのメイン関数
 exports.handler = async function(event) {
     // --- 認証情報とAIクライアントの初期化 ---
-    // この関数が呼び出されるたびに、認証情報をチェックし、AIクライアントを準備します。
     try {
         const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
 
-        // ★★★ 環境変数が存在するか確認 ★★★
+        // 環境変数が存在するか確認
         if (!gcpSaKeyBase64) {
             console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
             throw new Error("サーバーの設定エラーです。環境変数が設定されていません。");
         }
 
         const credentialsJson = Buffer.from(gcpSaKeyBase64, 'base64').toString('utf8');
+        // ★★★ 修正点 1: パースした認証情報オブジェクトをそのまま利用します ★★★
         const credentials = JSON.parse(credentialsJson);
         const projectId = credentials.project_id;
 
-        // ★★★ 認証情報が正しく読み込まれているか確認 ★★★
-        if (!credentials.client_email || !credentials.private_key) {
-            console.error("Authentication Error: Service account credentials not parsed correctly.");
+        // 認証情報が正しく読み込まれているか確認
+        if (!credentials.client_email || !credentials.private_key || !projectId) {
+            console.error("Authentication Error: Service account credentials not parsed correctly or project_id is missing.");
             throw new Error("サービスアカウントの認証情報が正しく設定されていません。");
         }
-        console.log(`Successfully parsed credentials for service account: ${credentials.client_email}`);
+        console.log(`Successfully parsed credentials for project: ${projectId}`);
 
-        // ★★★ 修正点：認証方法をより具体的に指定 ★★★
-        const explicitCredentials = {
-            client_email: credentials.client_email,
-            private_key: credentials.private_key,
-        };
-
-        // Vertex AI (Gemini)
-        const vertexAI = new VertexAI({ project: projectId, location: 'asia-northeast1', credentials: explicitCredentials });
+        // ★★★ 修正点 2: VertexAIクライアントに完全な認証情報オブジェクトを渡します ★★★
+        const vertexAI = new VertexAI({
+            project: projectId,
+            location: 'asia-northeast1',
+            credentials: credentials // オブジェクト全体を渡す
+        });
         const generativeModel = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' });
 
-        // Vision API
-        const visionClient = new ImageAnnotatorClient({ credentials: explicitCredentials });
+        // ★★★ 修正点 3: Vision APIクライアントにも完全な認証情報オブジェクトを渡します ★★★
+        const visionClient = new ImageAnnotatorClient({
+            projectId: projectId, // プロジェクトIDを明示的に指定
+            credentials: credentials // オブジェクト全体を渡す
+        });
         
         // --- ここからがメインの処理 ---
         if (event.httpMethod !== 'POST') {
@@ -68,24 +69,38 @@ exports.handler = async function(event) {
 
         // 5. Vertex AI (Gemini) で提案レポートを生成する
         const geminiResult = await generativeModel.generateContent(prompt);
-        const reportHtml = geminiResult.response.candidates[0].content.parts[0].text;
+        // レスポンスの構造を確認し、安全にテキストを取得
+        const reportHtml = geminiResult?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!reportHtml) {
+            console.error("Gemini response is not in the expected format:", JSON.stringify(geminiResult, null, 2));
+            throw new Error('AIからのレポート生成に失敗しました。');
+        }
+
 
         // 6. フロントエンドに結果を返す
         return {
             statusCode: 200,
+            headers: {
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify({ reportHtml, scores }),
         };
 
     } catch (error) {
         console.error("AI analysis failed:", error);
+        // エラーオブジェクト全体をログに出力すると、より詳細な情報が得られる場合があります
+        console.error("Full error object:", JSON.stringify(error, null, 2));
         return {
             statusCode: 500,
+            headers: {
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify({ message: error.message || "サーバーで不明なエラーが発生しました。" }),
         };
     }
 };
 
-// --- ヘルパー関数 ---
+// --- ヘルパー関数 (変更なし) ---
 
 function calculateScores(face) {
     const likelihoods = ['UNKNOWN', 'VERY_UNLIKELY', 'UNLIKELY', 'POSSIBLE', 'LIKELY', 'VERY_LIKELY'];
