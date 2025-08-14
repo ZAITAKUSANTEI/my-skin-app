@@ -6,9 +6,29 @@ const multipart = require('lambda-multipart-parser');
 // --- 認証情報の設定 ---
 // Netlifyの環境変数からBase64エンコードされたキーを読み込み、デコード（復元）
 const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
+
+// ★★★ デバッグステップ：環境変数が存在するか確認 ★★★
+if (!gcpSaKeyBase64) {
+    console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
+    // フロントエンドには一般的なエラーを返す
+    return {
+        statusCode: 500,
+        body: JSON.stringify({ message: "サーバーの設定エラーです。環境変数が設定されていません。" }),
+    };
+}
+
 const credentialsJson = Buffer.from(gcpSaKeyBase64, 'base64').toString('utf8');
 const credentials = JSON.parse(credentialsJson);
 const projectId = credentials.project_id;
+
+// ★★★ デバッグステップ：認証情報が正しく読み込まれているか確認 ★★★
+if (!credentials.client_email || !credentials.private_key) {
+    console.error("Authentication Error: Service account credentials not parsed correctly from environment variable.");
+    throw new Error("サービスアカウントの認証情報が正しく設定されていません。Base64のエンコードが正しいか確認してください。");
+}
+console.log(`Successfully parsed credentials for service account: ${credentials.client_email}`);
+// ★★★ デバッグここまで ★★★
+
 
 // --- 各AIクライアントの初期化 ---
 // Vertex AI (Gemini)
@@ -187,3 +207,4 @@ ${treatmentsDB}
 5. 回答は必ずHTML形式で出力してください。診断結果のタイトルは<h3>タグ、各治療法の提案は<div>で囲み、治療法名は<h5>タグ、特徴と価格は<p>タグを使用してください。
 `;
 }
+
