@@ -10,6 +10,7 @@ exports.handler = async function(event) {
     try {
         const gcpSaKeyBase64 = process.env.GCP_SA_KEY_BASE64;
 
+        // ★★★ 環境変数が存在するか確認 ★★★
         if (!gcpSaKeyBase64) {
             console.error("Fatal Error: GCP_SA_KEY_BASE64 environment variable not found.");
             throw new Error("サーバーの設定エラーです。環境変数が設定されていません。");
@@ -19,6 +20,7 @@ exports.handler = async function(event) {
         const credentials = JSON.parse(credentialsJson);
         const projectId = credentials.project_id;
 
+        // ★★★ 認証情報が正しく読み込まれているか確認 ★★★
         if (!credentials.client_email || !credentials.private_key) {
             console.error("Authentication Error: Service account credentials not parsed correctly.");
             throw new Error("サービスアカウントの認証情報が正しく設定されていません。");
